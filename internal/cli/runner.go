@@ -41,7 +41,7 @@ func Run(config *Config) error {
 	fmt.Println()
 
 	// Step 3: Detect offsets in parallel
-	fmt.Println("Detecting offsets...")
+	fmt.Printf("Detecting offsets (downsample=%d)...\n", config.DownsampleFactor)
 	offsetResults, err := detectOffsetsParallel(mixed, localFiles, config.SegmentDuration, config.DownsampleFactor)
 	if err != nil {
 		return err
