@@ -47,18 +47,50 @@ func Run(config *Config) error {
 		return err
 	}
 
-	// Step 4: Calculate padding
+	// Step 4: Calculate padding (coarse)
 	fileOffsets, err := audiosync.CalculatePadding(offsetResults, config.LocalPaths, mixed.SampleRate)
 	if err != nil {
 		return err
 	}
 
-	// Display offset results
+	// Display coarse offset results
 	for i, fo := range fileOffsets {
 		fmt.Printf("  ✓ %s: %s (confidence: %.2f)\n",
 			filepath.Base(config.LocalPaths[i]),
 			audiosync.FormatOffsetSeconds(fo.OffsetSeconds),
 			fo.Confidence)
+	}
+
+	fmt.Println()
+
+	// Step 4.5: Fine-tune offsets
+	fmt.Println("Fine-tuning synchronization...")
+
+	mixedMono := audio.ToMono(mixed.Data, mixed.Channels)
+
+	fileOffsets, err = audiosync.FinetuneOffsets(
+		mixedMono,
+		localFiles,
+		fileOffsets,
+		mixed.SampleRate,
+	)
+	if err != nil {
+		fmt.Printf("  ⚠️  Fine-tuning failed: %v\n", err)
+		fmt.Println("  Continuing with coarse alignment...")
+	} else {
+		// Display fine-tuning results
+		for i, fo := range fileOffsets {
+			if fo.FinetuneResult != nil && !fo.FinetuneResult.Skipped {
+				fmt.Printf("  ✓ %s: fine adjustment %s (confidence: %.2f)\n",
+					filepath.Base(config.LocalPaths[i]),
+					audiosync.FormatOffsetSeconds(fo.FineAdjustmentSeconds),
+					fo.FinetuneResult.Confidence)
+			} else if fo.FinetuneResult != nil && fo.FinetuneResult.Skipped {
+				fmt.Printf("  ⊘ %s: skipped (%s)\n",
+					filepath.Base(config.LocalPaths[i]),
+					fo.FinetuneResult.SkipReason)
+			}
+		}
 	}
 
 	// Check confidence scores

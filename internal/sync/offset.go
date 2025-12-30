@@ -8,12 +8,21 @@ import (
 // FileOffset represents the offset and padding information for a single file
 type FileOffset struct {
 	Path            string
-	OffsetSamples   int     // Original detected offset
-	OffsetSeconds   float64 // Original offset in seconds
-	PaddingSamples  int     // Silence to prepend
+	OffsetSamples   int     // Coarse offset detected
+	OffsetSeconds   float64 // Coarse offset in seconds
+
+	// Fine-tuning fields
+	FineAdjustmentSamples int     // Fine-tuning adjustment
+	FineAdjustmentSeconds float64 // Fine-tuning adjustment in seconds
+	FinalOffsetSamples    int     // Coarse + Fine = Final offset
+	FinalOffsetSeconds    float64 // Final offset in seconds
+
+	PaddingSamples  int     // Silence to prepend (calculated from final offset)
 	PaddingSeconds  float64 // Silence in seconds
 	Confidence      float64 // Detection confidence
 	IsEarliest      bool    // Whether this is the earliest file
+
+	FinetuneResult  *FinetuneResult // Fine-tuning result (nil if skipped)
 }
 
 // CalculatePadding calculates the silence padding needed for each file
