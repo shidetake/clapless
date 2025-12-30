@@ -15,8 +15,8 @@ type OverlapRegion struct {
 
 // FinetuneResult contains the result of fine-tuning for a single file
 type FinetuneResult struct {
-	FineAdjustmentSamples int     // Additional offset adjustment in samples
-	FineAdjustmentSeconds float64 // Additional offset adjustment in seconds
+	FineAdjustmentSamples int     // Adjustment to ADD to coarse offset (positive = shift later)
+	FineAdjustmentSeconds float64 // Adjustment to ADD to coarse offset (positive = shift later)
 	Confidence            float64 // Confidence score
 	SegmentUsed           OverlapRegion
 	Skipped               bool
@@ -225,10 +225,11 @@ func FinetuneOffsets(
 			continue
 		}
 
-		// Store fine-tuning result (raw detection result)
+		// Store fine-tuning result
+		// FineAdjustmentSamples is the adjustment to ADD to the coarse offset (sign-inverted from DetectOffset)
 		fileOffsets[i].FinetuneResult = &FinetuneResult{
-			FineAdjustmentSamples: fineResult.OffsetSamples,
-			FineAdjustmentSeconds: fineResult.OffsetSeconds,
+			FineAdjustmentSamples: -fineResult.OffsetSamples,
+			FineAdjustmentSeconds: -fineResult.OffsetSeconds,
 			Confidence:            fineResult.Confidence,
 			SegmentUsed: OverlapRegion{
 				StartSample: segStart,
@@ -239,12 +240,15 @@ func FinetuneOffsets(
 		}
 
 		// Merge coarse and fine offsets
-		// NOTE: Subtracting fine adjustment because we're comparing already-aligned segments
-		// Positive detection means local segment needs less padding (is already ahead)
+		// Time direction convention: positive = shift later (backward in time), negative = shift earlier (forward in time)
+		// - DetectOffset returns: positive = local segment is ahead (too early)
+		// - If local is ahead, we need to REDUCE the offset to shift it earlier
+		// - FineAdjustmentSamples stores the adjustment to ADD to the offset
+		// - Example: coarse=1000, DetectOffset=+10 (too early) -> adjustment=-10 -> final=1000+(-10)=990
 		fileOffsets[i].FineAdjustmentSamples = -fineResult.OffsetSamples
 		fileOffsets[i].FineAdjustmentSeconds = -fineResult.OffsetSeconds
-		fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples - fineResult.OffsetSamples
-		fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds - fineResult.OffsetSeconds
+		fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples + fileOffsets[i].FineAdjustmentSamples
+		fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds + fileOffsets[i].FineAdjustmentSeconds
 	}
 
 	// Step 5: Recalculate padding based on final offsets

@@ -10,7 +10,7 @@ import (
 
 // OffsetResult contains the detected offset and confidence score
 type OffsetResult struct {
-	OffsetSamples int     // Offset in samples (positive means local is ahead)
+	OffsetSamples int     // Offset in samples (positive = local needs to shift later/right = local is ahead/early)
 	OffsetSeconds float64 // Offset in seconds
 	Confidence    float64 // Confidence score (0.0 to 1.0)
 }
