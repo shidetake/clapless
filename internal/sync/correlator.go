@@ -16,7 +16,7 @@ type OffsetResult struct {
 }
 
 // DetectOffset finds the time offset between mixed and local audio using cross-correlation
-func DetectOffset(mixed, local []float64, sampleRate, segmentDuration int) (*OffsetResult, error) {
+func DetectOffset(mixed, local []float64, sampleRate, segmentDuration, downsampleFactor int) (*OffsetResult, error) {
 
 	// Validate input data
 	if len(mixed) == 0 {
@@ -27,7 +27,6 @@ func DetectOffset(mixed, local []float64, sampleRate, segmentDuration int) (*Off
 	}
 
 	// Coarse search with downsampling
-	const downsampleFactor = 10
 	mixedCoarse := downsample(mixed, downsampleFactor)
 	localCoarse := downsample(local, downsampleFactor)
 

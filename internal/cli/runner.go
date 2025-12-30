@@ -42,7 +42,7 @@ func Run(config *Config) error {
 
 	// Step 3: Detect offsets in parallel
 	fmt.Println("Detecting offsets...")
-	offsetResults, err := detectOffsetsParallel(mixed, localFiles, config.SegmentDuration)
+	offsetResults, err := detectOffsetsParallel(mixed, localFiles, config.SegmentDuration, config.DownsampleFactor)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func validateSampleRates(mixed *audio.WAVData, localFiles []*audio.WAVData) erro
 }
 
 // detectOffsetsParallel detects offsets for all local files in parallel
-func detectOffsetsParallel(mixed *audio.WAVData, localFiles []*audio.WAVData, segmentDuration int) ([]*audiosync.OffsetResult, error) {
+func detectOffsetsParallel(mixed *audio.WAVData, localFiles []*audio.WAVData, segmentDuration, downsampleFactor int) ([]*audiosync.OffsetResult, error) {
 	// Convert mixed to mono for correlation
 	mixedMono := audio.ToMono(mixed.Data, mixed.Channels)
 
@@ -175,7 +175,7 @@ func detectOffsetsParallel(mixed *audio.WAVData, localFiles []*audio.WAVData, se
 			localMono := audio.ToMono(localData.Data, localData.Channels)
 
 			// Detect offset
-			offset, err := audiosync.DetectOffset(mixedMono, localMono, mixed.SampleRate, segmentDuration)
+			offset, err := audiosync.DetectOffset(mixedMono, localMono, mixed.SampleRate, segmentDuration, downsampleFactor)
 			results <- result{
 				index:  idx,
 				offset: offset,

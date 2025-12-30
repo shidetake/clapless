@@ -10,9 +10,10 @@ import (
 
 // Config holds the parsed command-line configuration
 type Config struct {
-	MixedPath       string
-	LocalPaths      []string
-	SegmentDuration int // Segment duration in seconds for correlation (default: 600)
+	MixedPath        string
+	LocalPaths       []string
+	SegmentDuration  int // Segment duration in seconds for correlation (default: 600)
+	DownsampleFactor int // Downsample factor for coarse search (default: 50)
 }
 
 // ParseFlags parses command-line flags and validates input
@@ -20,6 +21,7 @@ func ParseFlags() (*Config, error) {
 	// Define flags
 	mixedPath := flag.String("mixed", "", "Path to the mixed audio file (required)")
 	segmentDuration := flag.Int("segment-duration", 600, "Segment duration in seconds for correlation (default: 600 = 10 minutes)")
+	downsampleFactor := flag.Int("downsample", 50, "Downsample factor for coarse offset search (default: 50, higher = faster but less accurate)")
 	flag.Parse()
 
 	// Get positional arguments (local audio files)
@@ -51,10 +53,16 @@ func ParseFlags() (*Config, error) {
 		return nil, fmt.Errorf("segment duration must be positive, got %d", *segmentDuration)
 	}
 
+	// Validate downsample factor
+	if *downsampleFactor < 1 {
+		return nil, fmt.Errorf("downsample factor must be >= 1, got %d", *downsampleFactor)
+	}
+
 	return &Config{
-		MixedPath:       *mixedPath,
-		LocalPaths:      localPaths,
-		SegmentDuration: *segmentDuration,
+		MixedPath:        *mixedPath,
+		LocalPaths:       localPaths,
+		SegmentDuration:  *segmentDuration,
+		DownsampleFactor: *downsampleFactor,
 	}, nil
 }
 
