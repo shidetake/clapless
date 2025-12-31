@@ -19,16 +19,22 @@ type Config struct {
 // ParseFlags parses command-line flags and validates input
 func ParseFlags() (*Config, error) {
 	// Define flags
-	mixedPath := flag.String("mixed", "", "Path to the mixed audio file (required)")
-	segmentDuration := flag.Int("segment-duration", 600, "Segment duration in seconds for correlation (default: 600 = 10 minutes)")
-	downsampleFactor := flag.Int("downsample", 50, "Downsample factor for coarse offset search (default: 50, higher = faster but less accurate)")
+	var mixedPath string
+	var segmentDuration int
+	var downsampleFactor int
+
+	flag.StringVar(&mixedPath, "mixed", "", "Path to the mixed audio file (required)")
+	flag.StringVar(&mixedPath, "m", "", "Path to the mixed audio file (required) (shorthand)")
+	flag.IntVar(&segmentDuration, "segment-duration", 600, "Segment duration in seconds for correlation (default: 600 = 10 minutes)")
+	flag.IntVar(&downsampleFactor, "downsample", 50, "Downsample factor for coarse offset search (default: 50, higher = faster but less accurate)")
+	flag.IntVar(&downsampleFactor, "d", 50, "Downsample factor for coarse offset search (default: 50, higher = faster but less accurate) (shorthand)")
 	flag.Parse()
 
 	// Get positional arguments (local audio files)
 	localPaths := flag.Args()
 
 	// Validate mixed path
-	if *mixedPath == "" {
+	if mixedPath == "" {
 		return nil, fmt.Errorf("--mixed flag is required\n\nUsage: clapless --mixed <mixed.wav> <local1.wav> <local2.wav> ...")
 	}
 
@@ -38,7 +44,7 @@ func ParseFlags() (*Config, error) {
 	}
 
 	// Validate file existence and format
-	if err := validateFile(*mixedPath); err != nil {
+	if err := validateFile(mixedPath); err != nil {
 		return nil, fmt.Errorf("mixed file error: %w", err)
 	}
 
@@ -49,20 +55,20 @@ func ParseFlags() (*Config, error) {
 	}
 
 	// Validate segment duration
-	if *segmentDuration <= 0 {
-		return nil, fmt.Errorf("segment duration must be positive, got %d", *segmentDuration)
+	if segmentDuration <= 0 {
+		return nil, fmt.Errorf("segment duration must be positive, got %d", segmentDuration)
 	}
 
 	// Validate downsample factor
-	if *downsampleFactor < 1 {
-		return nil, fmt.Errorf("downsample factor must be >= 1, got %d", *downsampleFactor)
+	if downsampleFactor < 1 {
+		return nil, fmt.Errorf("downsample factor must be >= 1, got %d", downsampleFactor)
 	}
 
 	return &Config{
-		MixedPath:        *mixedPath,
+		MixedPath:        mixedPath,
 		LocalPaths:       localPaths,
-		SegmentDuration:  *segmentDuration,
-		DownsampleFactor: *downsampleFactor,
+		SegmentDuration:  segmentDuration,
+		DownsampleFactor: downsampleFactor,
 	}, nil
 }
 
