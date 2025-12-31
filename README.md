@@ -11,21 +11,28 @@
 
 ## インストール
 
+### Homebrew（macOS/Linux）
+
+```bash
+brew install shidetake/tap/clapless
+```
+
+### go install
+
+```bash
+go install github.com/shidetake/clapless@latest
+```
+
+### バイナリダウンロード
+
+[GitHub Releases](https://github.com/shidetake/clapless/releases)から各OS向けバイナリをダウンロードできます。
+
 ### ソースからビルド
 
 ```bash
 git clone https://github.com/shidetake/clapless.git
 cd clapless
 go build -o clapless ./cmd/clapless
-```
-
-### バイナリを配置
-
-```bash
-# macOS/Linux
-sudo mv clapless /usr/local/bin/
-
-# またはパスの通った任意の場所に配置
 ```
 
 ## 使い方
