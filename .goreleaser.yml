@@ -46,6 +46,7 @@ brews:
   - repository:
       owner: shidetake
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/shidetake/clapless
     description: "Audio synchronization tool for double-ender podcast recording"
