@@ -24,8 +24,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "clapless [flags] <local1.wav> <local2.wav> [local3.wav ...]",
-	Short: "Audio Synchronization Tool",
+	Use:     "clapless [flags] <local1.wav> <local2.wav> [local3.wav ...]",
+	Short:   "Audio Synchronization Tool",
+	Version: Version,
 	Long: `Clapless - Audio Synchronization Tool
 
 Automatically synchronize local podcast recordings with a mixed source.
