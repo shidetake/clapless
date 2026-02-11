@@ -41,9 +41,14 @@ func DetectOffset(mixed, local []float64, sampleRate, segmentDuration, downsampl
 	peakIdx, peakValue := findMaxPeak(correlation)
 
 	// Calculate offset from peak position
-	// FFT correlation: result[k] means local should be shifted k samples to the right
-	// So offset = peak_index directly
+	// FFT cross-correlation wraps negative lags to the upper indices:
+	//   Indices 0 to len(mixed)-1: positive lags (local is behind/late relative to mix)
+	//   Indices >= len(mixed): negative lags (local is ahead/early relative to mix)
+	// Negative lag peaks are at fftSize-d, so we subtract len(correlation) (= fftSize).
 	offset := peakIdx
+	if peakIdx >= len(mixedNorm) {
+		offset = peakIdx - len(correlation) // Convert wrapped index to negative lag
+	}
 
 	// Convert to original sample rate
 	finalOffset := offset * downsampleFactor
@@ -103,8 +108,7 @@ func crossCorrelateFFT(signal1, signal2 []float64) []float64 {
 		return []float64{0}
 	}
 
-	n := len(signal1) + len(signal2) - 1
-	fftSize := nextPowerOfTwo(n)
+	fftSize := nextPowerOfTwo(len(signal1) + len(signal2) - 1)
 
 	// Pad signals to FFT size
 	padded1 := padToSize(signal1, fftSize)
@@ -132,11 +136,11 @@ func crossCorrelateFFT(signal1, signal2 []float64) []float64 {
 		resultReal[i] /= float64(fftSize)
 	}
 
-	// Trim to actual correlation size
-	result := make([]float64, n)
-	copy(result, resultReal[:n])
-
-	return result
+	// Return full fftSize result without trimming.
+	// Negative lag peaks are at indices fftSize-d (where d is the lag),
+	// which can exceed n = len(s1)+len(s2)-1. Trimming to n would discard them.
+	// The region between n and fftSize contains only zeros (no false peaks).
+	return resultReal
 }
 
 // findMaxPeak finds the index and value of the maximum peak in the correlation
