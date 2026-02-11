@@ -68,7 +68,7 @@ func Run(config *Config) error {
 
 	mixedMono := audio.ToMono(mixed.Data, mixed.Channels)
 
-	fileOffsets, err = audiosync.FinetuneOffsets(
+	finetunedOffsets, err := audiosync.FinetuneOffsets(
 		mixedMono,
 		localFiles,
 		fileOffsets,
@@ -78,6 +78,7 @@ func Run(config *Config) error {
 		fmt.Printf("  ⚠️  Fine-tuning failed: %v\n", err)
 		fmt.Println("  Continuing with coarse alignment...")
 	} else {
+		fileOffsets = finetunedOffsets
 		// Display fine-tuning results
 		for i, fo := range fileOffsets {
 			if fo.FinetuneResult != nil && !fo.FinetuneResult.Skipped {
