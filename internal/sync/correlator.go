@@ -61,8 +61,18 @@ func DetectOffset(mixed, local []float64, sampleRate, segmentDuration, downsampl
 	// Convert to original sample rate
 	finalOffset := offset * downsampleFactor
 
-	// Calculate confidence (normalized correlation peak)
-	confidence := peakValue / float64(len(localNorm))
+	// Calculate confidence using extreme value theory normalization.
+	// For unit-variance signals of length N over fftSize lags, the expected
+	// maximum noise peak is: sqrt(N * 2 * ln(fftSize)).
+	// confidence = 1 - (expected_noise_peak / actual_peak)
+	//   → 0.0 when peak is at the noise floor (detection unreliable)
+	//   → 0.5 when peak is 2x the noise floor
+	//   → 1.0 for very strong peaks (same-environment recordings)
+	var confidence float64
+	if peakValue > 0 {
+		expectedNoisePeak := math.Sqrt(float64(len(localNorm)) * 2.0 * math.Log(float64(len(correlation))))
+		confidence = math.Max(0.0, 1.0-expectedNoisePeak/peakValue)
+	}
 
 	return &OffsetResult{
 		OffsetSamples: finalOffset,

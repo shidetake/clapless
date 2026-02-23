@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	minConfidence = 0.3 // Minimum confidence threshold
+	minConfidence = 0.3 // Minimum confidence threshold (EVT-normalized scale: 0=noise floor, 1=perfect)
 )
 
 // Run executes the main synchronization workflow
