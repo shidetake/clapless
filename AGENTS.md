@@ -41,9 +41,10 @@ internal/
 4. 粗いオフセットに微調整を加算
 
 ### Offset Sign Convention（重要）
-- **正のオフセット** = ローカル音源が先行（後ろにシフトが必要）
-- **負のオフセット** = ローカル音源が遅延（前にシフトが必要）
-- ファインチューニングの調整値は `DetectOffset` の結果を**符号反転**して格納
+- **正のオフセット** = ローカル音源が遅れて始まった（ミックス途中から録音開始）→ 無音を先頭に追加
+- **負のオフセット** = ローカル音源が早く始まった → 他のファイルに無音を追加
+- FFT相互相関の結果: ピーク k > 0 → local が mix より k サンプル**後に**始まった
+- ファインチューニングの調整値は `detectSegmentOffset` の結果を**そのまま**（符号反転なし）で加算: `FinalOffset = coarseOffset + headOffset`
 
 ### Padding Strategy
 - 最小オフセットのファイルを基準（最も早いファイル）
@@ -117,7 +118,10 @@ FFT結果を `n = len(s1)+len(s2)-1` にトリミングすると、fftSize > n �
 `FinetuneOffsets` が失敗しても、粗いオフセットで出力ファイルを生成する。3ファイル以上のケースで、ファインチューニング失敗が全出力を消失させるバグがあった（commit f812aad で修正）。
 
 ### 3. 符号規約の一貫性
-オフセットの符号規約がコード全体で一貫していることが重要。ファインチューニングでは `DetectOffset` の結果を符号反転して加算する。
+オフセットの符号規約がコード全体で一貫していることが重要。
+- `OffsetSamples > 0` = local が mix より後に始まった = 無音を追加する方向
+- ファインチューニング: `fineAdjSamples = headOffset`（符号反転なし）で FinalOffset を補正
+- ドリフトレート: `tailOffset < headOffset` = local クロックが速い → `driftRate = -(tailOffset-headOffset)/timeDiff > 0`（符号反転あり）
 
 ### 4. メモリ使用量
 - 42分の音声（48kHz）: ペアあたり約1.5GB

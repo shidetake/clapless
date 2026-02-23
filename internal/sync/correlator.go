@@ -8,6 +8,11 @@ import (
 	"gonum.org/v1/gonum/dsp/fourier"
 )
 
+const (
+	// maxSafeFFTSize limits FFT size to prevent excessive memory usage (~512MB for complex128)
+	maxSafeFFTSize = 1 << 25
+)
+
 // OffsetResult contains the detected offset and confidence score
 type OffsetResult struct {
 	OffsetSamples int     // Offset in samples (positive = local needs to shift later/right = local is ahead/early)
@@ -25,6 +30,9 @@ func DetectOffset(mixed, local []float64, sampleRate, segmentDuration, downsampl
 	if len(local) == 0 {
 		return nil, fmt.Errorf("local audio data is empty")
 	}
+
+	// Auto-adjust downsample factor if FFT would exceed safe size
+	downsampleFactor = adjustDownsampleFactor(len(mixed), len(local), downsampleFactor)
 
 	// Coarse search with downsampling
 	mixedCoarse := downsample(mixed, downsampleFactor)
@@ -209,4 +217,54 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// crossCorrelateGCCPHAT performs GCC-PHAT (Generalized Cross-Correlation with Phase Transform)
+// This whitens the spectrum before correlation, making it robust to different signal envelopes
+// (e.g., remote vs local recordings of the same audio)
+func crossCorrelateGCCPHAT(signal1, signal2 []float64) []float64 {
+	if len(signal1) == 0 || len(signal2) == 0 {
+		return []float64{0}
+	}
+
+	fftSize := nextPowerOfTwo(len(signal1) + len(signal2) - 1)
+
+	padded1 := padToSize(signal1, fftSize)
+	padded2 := padToSize(signal2, fftSize)
+
+	fft := fourier.NewFFT(fftSize)
+
+	fft1 := fft.Coefficients(nil, padded1)
+	fft2 := fft.Coefficients(nil, padded2)
+
+	// GCC-PHAT: normalize cross-power spectrum by magnitude
+	product := make([]complex128, len(fft1))
+	for i := range product {
+		cp := fft1[i] * cmplx.Conj(fft2[i])
+		mag := cmplx.Abs(cp)
+		if mag > 1e-10 {
+			product[i] = cp / complex(mag, 0)
+		}
+	}
+
+	resultReal := fft.Sequence(nil, product)
+
+	for i := range resultReal {
+		resultReal[i] /= float64(fftSize)
+	}
+
+	return resultReal
+}
+
+// adjustDownsampleFactor increases the downsample factor if the resulting FFT size
+// would exceed maxSafeFFTSize
+func adjustDownsampleFactor(mixedLen, localLen, factor int) int {
+	for {
+		n := mixedLen/factor + localLen/factor - 1
+		fftSize := nextPowerOfTwo(n)
+		if fftSize <= maxSafeFFTSize {
+			return factor
+		}
+		factor++
+	}
 }

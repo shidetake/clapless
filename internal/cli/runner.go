@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -82,10 +83,19 @@ func Run(config *Config) error {
 		// Display fine-tuning results
 		for i, fo := range fileOffsets {
 			if fo.FinetuneResult != nil && !fo.FinetuneResult.Skipped {
-				fmt.Printf("  ✓ %s: fine adjustment %s (confidence: %.2f)\n",
+				driftInfo := ""
+				if math.Abs(fo.FinetuneResult.DriftRate) > 10e-6 {
+					pct := fo.FinetuneResult.DriftRate * 100
+					monoLen := len(localFiles[i].Data) / localFiles[i].Channels
+					fileDurationSec := float64(monoLen) / float64(mixed.SampleRate)
+					totalDriftSec := fo.FinetuneResult.DriftRate * fileDurationSec
+					durationMin := fileDurationSec / 60.0
+					driftInfo = fmt.Sprintf(", drift %.2f%% (%.1fs over %.0fmin)", pct, totalDriftSec, durationMin)
+				}
+				fmt.Printf("  ✓ %s: fine adjustment %s%s\n",
 					filepath.Base(config.LocalPaths[i]),
 					audiosync.FormatOffsetSeconds(fo.FineAdjustmentSeconds),
-					fo.FinetuneResult.Confidence)
+					driftInfo)
 			} else if fo.FinetuneResult != nil && fo.FinetuneResult.Skipped {
 				fmt.Printf("  ⊘ %s: skipped (%s)\n",
 					filepath.Base(config.LocalPaths[i]),
@@ -233,25 +243,31 @@ func detectOffsetsParallel(mixed *audio.WAVData, localFiles []*audio.WAVData, se
 	return offsetResults, nil
 }
 
-// writeSyncedFile writes a synchronized audio file with padding
+// writeSyncedFile writes a synchronized audio file with padding and optional drift correction
 func writeSyncedFile(localData *audio.WAVData, fo *audiosync.FileOffset, originalPath string) error {
-	// Prepend silence if needed
-	syncedData := localData.Data
+	var syncedData []float64
+
+	// Use drift-corrected data if available (mono output)
+	if fo.FinetuneResult != nil && fo.FinetuneResult.DriftCorrectedData != nil {
+		syncedData = fo.FinetuneResult.DriftCorrectedData
+		// Drift-corrected data is mono; write as mono
+		if fo.PaddingSamples > 0 {
+			syncedData = audio.PrependSilence(syncedData, fo.PaddingSamples)
+		}
+
+		outputPath := generateOutputPath(originalPath)
+		return audio.WriteWAV(outputPath, syncedData, localData.SampleRate, 1, localData.BitDepth)
+	}
+
+	// No drift correction: use original data preserving channels
+	syncedData = localData.Data
 	if fo.PaddingSamples > 0 {
-		// For multi-channel audio, we need to prepend silence for each channel
 		silenceSamples := fo.PaddingSamples * localData.Channels
 		syncedData = audio.PrependSilence(localData.Data, silenceSamples)
 	}
 
-	// Generate output path
 	outputPath := generateOutputPath(originalPath)
-
-	// Write synced WAV file
-	if err := audio.WriteWAV(outputPath, syncedData, localData.SampleRate, localData.Channels, localData.BitDepth); err != nil {
-		return err
-	}
-
-	return nil
+	return audio.WriteWAV(outputPath, syncedData, localData.SampleRate, localData.Channels, localData.BitDepth)
 }
 
 // generateOutputPath creates the output file path with _synced suffix

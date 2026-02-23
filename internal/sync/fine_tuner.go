@@ -2,8 +2,18 @@ package sync
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/shidetake/clapless/internal/audio"
+)
+
+const (
+	// segmentDurationSec is the duration of each analysis segment in seconds
+	segmentDurationSec = 60.0
+	// minOverlapDurationSec is the minimum overlap needed for fine-tuning
+	minOverlapDurationSec = 30.0
+	// driftThresholdPPM is the minimum drift rate to apply correction (10 parts per million)
+	driftThresholdPPM = 10e-6
 )
 
 // OverlapRegion represents the temporal region where all files have data after coarse alignment
@@ -18,6 +28,8 @@ type FinetuneResult struct {
 	FineAdjustmentSamples int     // Adjustment to ADD to coarse offset (positive = shift later)
 	FineAdjustmentSeconds float64 // Adjustment to ADD to coarse offset (positive = shift later)
 	Confidence            float64 // Confidence score
+	DriftRate             float64 // Drift rate (seconds per second, 0 = no drift)
+	DriftCorrectedData    []float64 // Drift-corrected mono audio data (nil if no drift correction)
 	SegmentUsed           OverlapRegion
 	Skipped               bool
 	SkipReason            string
@@ -138,7 +150,51 @@ func recalculatePadding(fileOffsets []*FileOffset, sampleRate int) ([]*FileOffse
 	return fileOffsets, nil
 }
 
-// FinetuneOffsets performs fine-tuning on coarsely aligned files
+// detectSegmentOffset runs GCC-PHAT on a segment and returns the offset in samples
+func detectSegmentOffset(mixed, localMono []float64, segStart, segEnd, localFileOffset, sampleRate int) (int, error) {
+	// Extract mixed segment
+	mixedSeg, err := extractSegment(mixed, segStart, segEnd)
+	if err != nil {
+		return 0, fmt.Errorf("failed to extract mixed segment: %w", err)
+	}
+
+	// Calculate local segment position
+	localSegStart := segStart - localFileOffset
+	localSegEnd := segEnd - localFileOffset
+
+	// Validate bounds
+	if localSegStart < 0 || localSegEnd > len(localMono) {
+		return 0, fmt.Errorf("segment out of bounds [%d, %d) for file length %d",
+			localSegStart, localSegEnd, len(localMono))
+	}
+
+	localSeg, err := extractSegment(localMono, localSegStart, localSegEnd)
+	if err != nil {
+		return 0, fmt.Errorf("failed to extract local segment: %w", err)
+	}
+
+	// Normalize both segments
+	mixedNorm := normalize(mixedSeg)
+	localNorm := normalize(localSeg)
+
+	// Run GCC-PHAT
+	correlation := crossCorrelateGCCPHAT(mixedNorm, localNorm)
+
+	// Find peak
+	peakIdx, _ := findMaxPeak(correlation)
+
+	// Convert peak index to offset (same convention as DetectOffset)
+	// Threshold is the actual mixed segment length (not the fixed segmentDurationSec)
+	mixedSegLen := segEnd - segStart
+	offset := peakIdx
+	if peakIdx >= mixedSegLen {
+		offset = peakIdx - len(correlation)
+	}
+
+	return offset, nil
+}
+
+// FinetuneOffsets performs fine-tuning using segment GCC-PHAT with drift detection
 func FinetuneOffsets(
 	mixed []float64,
 	localFiles []*audio.WAVData,
@@ -151,14 +207,17 @@ func FinetuneOffsets(
 		return nil, fmt.Errorf("failed to find overlapping region: %w", err)
 	}
 
-	// Step 2: Select segment for fine-tuning (target 60s, minimum 30s)
-	segStart, segEnd, err := selectFinetuneSegment(overlap, 60.0, 30.0, sampleRate)
-	if err != nil {
-		// Overlap too small, skip fine-tuning for all files
+	segSamples := int(segmentDurationSec * float64(sampleRate))
+	minSamples := int(minOverlapDurationSec * float64(sampleRate))
+	overlapSamples := overlap.EndSample - overlap.StartSample
+
+	// Check minimum overlap
+	if overlapSamples < minSamples {
 		for i := range fileOffsets {
 			fileOffsets[i].FinetuneResult = &FinetuneResult{
 				Skipped:    true,
-				SkipReason: err.Error(),
+				SkipReason: fmt.Sprintf("overlap duration %.2fs is less than minimum %.2fs",
+					overlap.DurationSec, minOverlapDurationSec),
 			}
 			fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples
 			fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds
@@ -166,91 +225,117 @@ func FinetuneOffsets(
 		return fileOffsets, nil
 	}
 
-	// Step 3: Extract mixed segment
-	mixedSegment, err := extractSegment(mixed, segStart, segEnd)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract mixed segment: %w", err)
-	}
-
-	// Step 4: Fine-tune each local file
+	// Step 2: Fine-tune each local file using segment GCC-PHAT
 	for i, localFile := range localFiles {
-		// Convert to mono
 		localMono := audio.ToMono(localFile.Data, localFile.Channels)
 
-		// Calculate where this file's segment should be extracted
-		// The segment is at [segStart, segEnd) on the aligned timeline
-		// This file starts at fileOffsets[i].OffsetSamples
-		localSegStart := segStart - fileOffsets[i].OffsetSamples
-		localSegEnd := segEnd - fileOffsets[i].OffsetSamples
-
-		// Validate bounds
-		if localSegStart < 0 || localSegEnd > len(localMono) {
-			fileOffsets[i].FinetuneResult = &FinetuneResult{
-				Skipped:    true,
-				SkipReason: fmt.Sprintf("segment out of bounds [%d, %d) for file length %d",
-					localSegStart, localSegEnd, len(localMono)),
-			}
-			fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples
-			fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds
-			continue
+		// Determine head segment bounds
+		headStart := overlap.StartSample
+		headEnd := headStart + segSamples
+		if headEnd > overlap.EndSample {
+			headEnd = overlap.EndSample
 		}
 
-		// Extract local segment
-		localSegment, err := extractSegment(localMono, localSegStart, localSegEnd)
+		// Detect offset at head segment
+		headOffset, err := detectSegmentOffset(mixed, localMono, headStart, headEnd, fileOffsets[i].OffsetSamples, sampleRate)
 		if err != nil {
 			fileOffsets[i].FinetuneResult = &FinetuneResult{
 				Skipped:    true,
-				SkipReason: fmt.Sprintf("extraction failed: %v", err),
+				SkipReason: fmt.Sprintf("head segment: %v", err),
 			}
 			fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples
 			fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds
 			continue
 		}
 
-		// Run cross-correlation without downsampling (downsampleFactor = 1)
-		fineResult, err := DetectOffset(
-			mixedSegment,
-			localSegment,
-			sampleRate,
-			0, // segmentDuration not used
-			1, // downsampleFactor = 1 (no downsampling)
-		)
-		if err != nil {
-			fileOffsets[i].FinetuneResult = &FinetuneResult{
-				Skipped:    true,
-				SkipReason: fmt.Sprintf("correlation failed: %v", err),
+		// Fine adjustment from head segment.
+		// headOffset > 0 means local is behind mix in this segment → increase offset.
+		// headOffset < 0 means local is ahead of mix → decrease offset.
+		fineAdjSamples := headOffset
+		fineAdjSeconds := float64(fineAdjSamples) / float64(sampleRate)
+
+		// Detect drift using tail segment (only if overlap is long enough for two distinct segments)
+		var driftRate float64
+		if overlapSamples >= 2*segSamples {
+			tailEnd := overlap.EndSample
+			tailStart := tailEnd - segSamples
+
+			tailOffset, tailErr := detectSegmentOffset(mixed, localMono, tailStart, tailEnd, fileOffsets[i].OffsetSamples, sampleRate)
+			if tailErr == nil {
+				// Head and tail positions on the aligned timeline (center of each segment)
+				headPosSec := float64(headStart+headEnd) / 2.0 / float64(sampleRate)
+				tailPosSec := float64(tailStart+tailEnd) / 2.0 / float64(sampleRate)
+				timeDiff := tailPosSec - headPosSec
+
+				if timeDiff > 0 {
+					// Drift = difference in detected offsets over time.
+					// tailOffset < headOffset means local is getting more ahead over time → local clock is fast.
+					// We negate so that driftRate > 0 means local clock is fast (needs compression).
+					offsetDiffSec := float64(tailOffset-headOffset) / float64(sampleRate)
+					driftRate = -offsetDiffSec / timeDiff
+				}
 			}
-			fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples
-			fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds
-			continue
 		}
 
-		// Store fine-tuning result
-		// FineAdjustmentSamples is the adjustment to ADD to the coarse offset (sign-inverted from DetectOffset)
+		// Apply drift correction if significant
+		var driftCorrectedData []float64
+		if math.Abs(driftRate) > driftThresholdPPM {
+			driftCorrectedData = resampleWithDrift(localMono, driftRate, sampleRate)
+		}
+
+		// Store result
 		fileOffsets[i].FinetuneResult = &FinetuneResult{
-			FineAdjustmentSamples: -fineResult.OffsetSamples,
-			FineAdjustmentSeconds: -fineResult.OffsetSeconds,
-			Confidence:            fineResult.Confidence,
+			FineAdjustmentSamples: fineAdjSamples,
+			FineAdjustmentSeconds: fineAdjSeconds,
+			DriftRate:             driftRate,
+			DriftCorrectedData:    driftCorrectedData,
 			SegmentUsed: OverlapRegion{
-				StartSample: segStart,
-				EndSample:   segEnd,
-				DurationSec: float64(segEnd-segStart) / float64(sampleRate),
+				StartSample: headStart,
+				EndSample:   headEnd,
+				DurationSec: float64(headEnd-headStart) / float64(sampleRate),
 			},
 			Skipped: false,
 		}
 
-		// Merge coarse and fine offsets
-		// Time direction convention: positive = shift later (backward in time), negative = shift earlier (forward in time)
-		// - DetectOffset returns: positive = local segment is ahead (too early)
-		// - If local is ahead, we need to REDUCE the offset to shift it earlier
-		// - FineAdjustmentSamples stores the adjustment to ADD to the offset
-		// - Example: coarse=1000, DetectOffset=+10 (too early) -> adjustment=-10 -> final=1000+(-10)=990
-		fileOffsets[i].FineAdjustmentSamples = -fineResult.OffsetSamples
-		fileOffsets[i].FineAdjustmentSeconds = -fineResult.OffsetSeconds
-		fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples + fileOffsets[i].FineAdjustmentSamples
-		fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds + fileOffsets[i].FineAdjustmentSeconds
+		fileOffsets[i].FineAdjustmentSamples = fineAdjSamples
+		fileOffsets[i].FineAdjustmentSeconds = fineAdjSeconds
+		fileOffsets[i].FinalOffsetSamples = fileOffsets[i].OffsetSamples + fineAdjSamples
+		fileOffsets[i].FinalOffsetSeconds = fileOffsets[i].OffsetSeconds + fineAdjSeconds
 	}
 
-	// Step 5: Recalculate padding based on final offsets
+	// Step 3: Recalculate padding based on final offsets
 	return recalculatePadding(fileOffsets, sampleRate)
+}
+
+// resampleWithDrift corrects clock drift by resampling audio data using linear interpolation.
+// driftRate is seconds-per-second: positive means local clock runs fast (samples are too close together).
+// Each output sample n maps to input position n * (1 + driftRate).
+func resampleWithDrift(data []float64, driftRate float64, sampleRate int) []float64 {
+	n := len(data)
+	if n == 0 {
+		return data
+	}
+
+	// Output length: local is stretched/compressed so total duration changes
+	outputLen := int(float64(n) / (1.0 + driftRate))
+	if outputLen <= 0 {
+		return data
+	}
+
+	result := make([]float64, outputLen)
+	scale := 1.0 + driftRate
+
+	for i := 0; i < outputLen; i++ {
+		srcPos := float64(i) * scale
+		idx := int(srcPos)
+		frac := srcPos - float64(idx)
+
+		if idx+1 < n {
+			result[i] = data[idx]*(1-frac) + data[idx+1]*frac
+		} else if idx < n {
+			result[i] = data[idx]
+		}
+	}
+
+	return result
 }
