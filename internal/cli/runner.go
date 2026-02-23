@@ -89,8 +89,7 @@ func Run(config *Config) error {
 					monoLen := len(localFiles[i].Data) / localFiles[i].Channels
 					fileDurationSec := float64(monoLen) / float64(mixed.SampleRate)
 					totalDriftSec := fo.FinetuneResult.DriftRate * fileDurationSec
-					durationMin := fileDurationSec / 60.0
-					driftInfo = fmt.Sprintf(", drift %.2f%% (%.1fs over %.0fmin)", pct, totalDriftSec, durationMin)
+					driftInfo = fmt.Sprintf(", drift %.2f%% (%.1fs)", pct, totalDriftSec)
 				}
 				fmt.Printf("  ✓ %s: fine adjustment %s%s\n",
 					filepath.Base(config.LocalPaths[i]),
@@ -124,6 +123,22 @@ func Run(config *Config) error {
 			fmt.Printf("  %s: No padding needed (earliest)\n", filepath.Base(config.LocalPaths[i]))
 		} else {
 			fmt.Printf("  %s: Adding %.3fs silence\n", filepath.Base(config.LocalPaths[i]), fo.PaddingSeconds)
+		}
+		if fo.FinetuneResult != nil && fo.FinetuneResult.DriftCorrectedData != nil {
+			origLen := len(localFiles[i].Data) / localFiles[i].Channels
+			corrLen := len(fo.FinetuneResult.DriftCorrectedData)
+			direction := "stretched"
+			if corrLen < origLen {
+				direction = "compressed"
+			}
+			origSec := float64(origLen) / float64(mixed.SampleRate)
+			corrSec := float64(corrLen) / float64(mixed.SampleRate)
+			fmt.Printf("  %s: drift-corrected (%s %.2f%%, %d:%02d → %d:%02d)\n",
+				filepath.Base(config.LocalPaths[i]),
+				direction, math.Abs(fo.FinetuneResult.DriftRate)*100,
+				int(origSec)/60, int(origSec)%60,
+				int(corrSec)/60, int(corrSec)%60,
+			)
 		}
 	}
 
