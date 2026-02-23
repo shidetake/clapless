@@ -100,6 +100,10 @@ go test ./...
 - macOS/Linux/Windows × amd64/arm64 のバイナリ生成
 - Homebrew tap (`shidetake/homebrew-tap`) に自動パブリッシュ
 
+### Git操作の制約（AIエージェント向け）
+- `git push` は**必ずユーザーに確認してから**実行する。「リリースして」などの指示があっても、pushの前に確認を取ること。
+- コミットはユーザーに明示的に依頼された場合のみ行う。
+
 ## Data Flow
 
 ```
