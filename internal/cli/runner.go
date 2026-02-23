@@ -17,10 +17,6 @@ const (
 
 // Run executes the main synchronization workflow
 func Run(config *Config) error {
-	fmt.Println("Clapless - Audio Synchronization Tool")
-	fmt.Println("======================================")
-	fmt.Println()
-
 	// Step 1: Load mixed audio
 	fmt.Println("Loading files...")
 	mixed, err := loadMixedAudio(config.MixedPath)
@@ -42,7 +38,7 @@ func Run(config *Config) error {
 	fmt.Println()
 
 	// Step 3: Detect offsets in parallel
-	fmt.Printf("Detecting offsets (downsample=%d)...\n", config.DownsampleFactor)
+	fmt.Printf("Coarse detection (downsample=%d)...\n", config.DownsampleFactor)
 	offsetResults, err := detectOffsetsParallel(mixed, localFiles, config.SegmentDuration, config.DownsampleFactor)
 	if err != nil {
 		return err
@@ -65,7 +61,7 @@ func Run(config *Config) error {
 	fmt.Println()
 
 	// Step 4.5: Fine-tune offsets
-	fmt.Println("Fine-tuning synchronization...")
+	fmt.Println("Fine detection...")
 
 	mixedMono := audio.ToMono(mixed.Data, mixed.Channels)
 
@@ -117,12 +113,12 @@ func Run(config *Config) error {
 	fmt.Println()
 
 	// Step 5: Apply padding and write synced files
-	fmt.Println("Calculating synchronization...")
+	fmt.Println("Writing synchronized files...")
+
 	for i, fo := range fileOffsets {
-		if fo.IsEarliest {
-			fmt.Printf("  %s: No padding needed (earliest)\n", filepath.Base(config.LocalPaths[i]))
-		} else {
-			fmt.Printf("  %s: Adding %.3fs silence\n", filepath.Base(config.LocalPaths[i]), fo.PaddingSeconds)
+		var infoParts []string
+		if !fo.IsEarliest {
+			infoParts = append(infoParts, fmt.Sprintf("+%.3fs silence", fo.PaddingSeconds))
 		}
 		if fo.FinetuneResult != nil && fo.FinetuneResult.DriftCorrectedData != nil {
 			origLen := len(localFiles[i].Data) / localFiles[i].Channels
@@ -133,24 +129,21 @@ func Run(config *Config) error {
 			}
 			origSec := float64(origLen) / float64(mixed.SampleRate)
 			corrSec := float64(corrLen) / float64(mixed.SampleRate)
-			fmt.Printf("  %s: drift-corrected (%s %.2f%%, %d:%02d → %d:%02d)\n",
-				filepath.Base(config.LocalPaths[i]),
+			infoParts = append(infoParts, fmt.Sprintf("%s %.2f%%, %d:%02d→%d:%02d",
 				direction, math.Abs(fo.FinetuneResult.DriftRate)*100,
 				int(origSec)/60, int(origSec)%60,
 				int(corrSec)/60, int(corrSec)%60,
-			)
+			))
 		}
-	}
-
-	fmt.Println()
-	fmt.Println("Writing synchronized files...")
-
-	for i, fo := range fileOffsets {
 		if err := writeSyncedFile(localFiles[i], fo, config.LocalPaths[i]); err != nil {
 			return fmt.Errorf("failed to write synced file for %s: %w", config.LocalPaths[i], err)
 		}
 		outputPath := generateOutputPath(config.LocalPaths[i])
-		fmt.Printf("  ✓ %s\n", filepath.Base(outputPath))
+		if len(infoParts) > 0 {
+			fmt.Printf("  ✓ %s (%s)\n", filepath.Base(outputPath), strings.Join(infoParts, ", "))
+		} else {
+			fmt.Printf("  ✓ %s\n", filepath.Base(outputPath))
+		}
 	}
 
 	fmt.Println()
